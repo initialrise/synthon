@@ -1,0 +1,13 @@
+[package]
+name = "synthon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+merman = { version = "=0.10.0-alpha.2", default-features = false, features = ["all-diagrams", "svg", "layout-cytoscape"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+resvg = "0.49"
+serde_json = "1"
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }

@@ -184,7 +184,7 @@ pub struct Viewer {
     offset: f32,
     pending_offset: Option<f32>,
     view_h: f32,
-    /// (top-level block, fraction into it) at the top of the viewport.
+    /// (top-level block, px from its top) at the top of the viewport; px < 0 inside the gap above.
     anchor: (usize, f32),
     /// SYNTHON_BENCH: process start; prints first-frame and diagrams-ready times, then quits.
     pub bench: Option<std::time::Instant>,
@@ -227,7 +227,7 @@ impl Viewer {
             offset: 0.0,
             pending_offset: None,
             view_h: 600.0,
-            anchor: (0, 0.0),
+            anchor: (0, -PAD),
             bench: None,
             frames: 0,
         }
@@ -329,7 +329,7 @@ impl Viewer {
             self.laid[i] = Laid { y: 0.0, h, items, done: true, live: true };
         }
         self.restack();
-        self.laid.get(ai).map_or(0.0, |l| l.y + af * l.h - offset)
+        self.laid.get(ai).map_or(0.0, |l| l.y + af.min(l.h) - offset)
     }
 
     fn restack(&mut self) {
@@ -348,7 +348,7 @@ impl Viewer {
         self.cursor = 0;
         self.restack();
         if let Some(l) = self.laid.get(self.anchor.0) {
-            self.pending_offset = Some(l.y + self.anchor.1 * l.h);
+            self.pending_offset = Some((l.y + self.anchor.1.min(l.h)).max(0.0));
         }
     }
 
@@ -406,8 +406,8 @@ impl Viewer {
     fn anchor_at(&self, offset: f32) -> (usize, f32) {
         let i = self.laid.partition_point(|l| l.y + l.h + GAP <= offset);
         match self.laid.get(i) {
-            Some(l) => (i, ((offset - l.y) / l.h.max(1.0)).clamp(0.0, 1.0)),
-            None => (self.laid.len().saturating_sub(1), 1.0),
+            Some(l) => (i, offset - l.y),
+            None => (self.laid.len().saturating_sub(1), f32::MAX),
         }
     }
 

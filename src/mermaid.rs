@@ -101,5 +101,3 @@ mod tests {
     }
 }
 
-/// Load system fonts once (call from a background thread at startup).
-pub fn warm_up() {}

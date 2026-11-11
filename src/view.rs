@@ -739,7 +739,9 @@ mod tests {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(w, h))),
             ..Default::default()
         };
-        ctx.run_ui(input, |ui| v.show(ui))
+        let mut out = ctx.run_ui(input, |ui| v.show(ui));
+        out.textures_delta.clear();
+        out
     }
 
     fn visible_content(out: &egui::FullOutput, screen: Rect) -> usize {

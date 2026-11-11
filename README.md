@@ -24,7 +24,21 @@ It's as simple as [glow](https://github.com/charmbracelet/glow), but mermaid dia
 
 ## Install
 
-Requires Rust 1.95 or newer and Linux (X11 or Wayland, with OpenGL).
+### Prebuilt binary
+
+Download the archive for your architecture (`x86_64` or `aarch64`) from [Releases](https://github.com/initialrise/synthon/releases), then:
+
+```sh
+sha256sum -c synthon-*.tar.gz.sha256
+tar xzf synthon-*.tar.gz
+install -m755 synthon-*/synthon ~/.local/bin/
+```
+
+It needs Linux with X11 or Wayland and OpenGL. The binaries are built on Ubuntu 22.04, so they run on glibc 2.35 or newer.
+
+### From source
+
+Requires Rust 1.95 or newer.
 
 ```sh
 git clone https://github.com/initialrise/synthon

@@ -126,3 +126,7 @@ cargo run --release -- fixtures/sample.md
 | `src/table.rs` | Column-width algorithm |
 | `src/keys.rs` | Key bindings |
 | `src/cli.rs` | Arguments and input |
+
+## License
+
+[MIT](LICENSE)

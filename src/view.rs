@@ -816,31 +816,62 @@ fn spans_job(spans: &[Span], size: f32, bold_: bool, color: Color32, w: f32, c: 
 
 // ---------- fonts ----------
 
-/// System sans (regular + bold) and mono via fontdb, egui defaults as fallback (emoji, symbols).
-/// ponytail: fontdb family guesses, not fontconfig rules; switch to fc-match if users complain.
+/// System fonts via fontdb: sans (regular + bold), mono, then CJK and colour-emoji fallbacks,
+/// then egui's bundled fonts (Latin, monochrome emoji, icons) as the last resort.
+/// Fonts are memory-mapped, so a 20 MB CJK font only costs the glyph pages actually used.
+/// note: fontdb family guesses, not fontconfig rules; switch to fc-match if fonts get picked badly.
 pub fn load_fonts() -> egui::FontDefinitions {
-    use resvg::usvg::fontdb::{Database, Family, Query, Weight};
+    use resvg::usvg::fontdb::{Database, Family, Query, Source, Weight};
     let mut db = Database::new();
     db.load_system_fonts();
-    let pick = |names: &[&str], generic: Family, weight: Weight| -> Option<Vec<u8>> {
-        let fams: Vec<Family> = names.iter().map(|n| Family::Name(n)).chain([generic]).collect();
+    let find = |names: &[&str], generic: Option<Family>, weight: Weight| -> Option<egui::FontData> {
+        let fams: Vec<Family> = names.iter().map(|n| Family::Name(n)).chain(generic).collect();
         let id = db.query(&Query { families: &fams, weight, ..Default::default() })?;
-        db.with_face_data(id, |data, _| data.to_vec())
+        let (src, index) = db.face_source(id)?;
+        let blob: Arc<dyn AsRef<[u8]> + Send + Sync> = match src {
+            Source::File(path) => {
+                let file = std::fs::File::open(path).ok()?;
+                // SAFETY: system font files are not modified while we run; if one were truncated
+                // underneath us, reading its glyphs could fault (same trade-off as fontdb's own mmap).
+                Arc::new(unsafe { memmap2::Mmap::map(&file) }.ok()?)
+            }
+            Source::Binary(b) | Source::SharedFile(_, b) => b,
+        };
+        Some(egui::FontData::from_blob(blob, index))
     };
     let sans = ["Inter", "Noto Sans", "DejaVu Sans", "Liberation Sans", "Ubuntu"];
     let mono = ["JetBrains Mono", "Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono"];
+    let cjk = ["Noto Sans CJK SC", "Noto Sans CJK JP", "Source Han Sans SC", "WenQuanYi Micro Hei", "Droid Sans Fallback"];
+    let emoji = ["Noto Color Emoji", "Twemoji", "JoyPixels", "Apple Color Emoji"];
+
     let mut defs = egui::FontDefinitions::default();
-    let add = |defs: &mut egui::FontDefinitions, name: &str, data: Option<Vec<u8>>, family: FontFamily| {
+    for (name, data) in [
+        ("sans", find(&sans, Some(Family::SansSerif), Weight::NORMAL)),
+        ("sans-bold", find(&sans, Some(Family::SansSerif), Weight::BOLD)),
+        ("mono", find(&mono, Some(Family::Monospace), Weight::NORMAL)),
+        ("cjk", find(&cjk, None, Weight::NORMAL)),
+        ("cjk-bold", find(&cjk, None, Weight::BOLD)),
+        ("emoji", find(&emoji, None, Weight::NORMAL)),
+    ] {
         if let Some(d) = data {
-            defs.font_data.insert(name.into(), Arc::new(egui::FontData::from_owned(d)));
-            defs.families.entry(family).or_default().insert(0, name.into());
+            defs.font_data.insert(name.into(), Arc::new(d));
         }
+    }
+    // egui's lists look like [Latin font(s).., "egui-icons", emoji fonts..]: put our system fonts
+    // first, and CJK + colour emoji just before egui's icon/monochrome-emoji tail.
+    let base = defs.families.clone();
+    let chain = |primary: &[&str], base: &[String], fallback: &[&str]| -> Vec<String> {
+        let split = base.iter().position(|n| n == "egui-icons").unwrap_or(base.len());
+        let ours = |names: &[&str]| names.iter().filter(|n| defs.font_data.contains_key(**n)).map(|n| n.to_string()).collect::<Vec<_>>();
+        [ours(primary), base[..split].to_vec(), ours(fallback), base[split..].to_vec()].concat()
     };
-    add(&mut defs, "sans", pick(&sans, Family::SansSerif, Weight::NORMAL), FontFamily::Proportional);
-    add(&mut defs, "mono", pick(&mono, Family::Monospace, Weight::NORMAL), FontFamily::Monospace);
-    let prop = defs.families[&FontFamily::Proportional].clone();
-    defs.families.insert(bold(), prop);
-    add(&mut defs, "sans-bold", pick(&sans, Family::SansSerif, Weight::BOLD), bold());
+    let prop = &base[&FontFamily::Proportional];
+    let families = [
+        (FontFamily::Proportional, chain(&["sans"], prop, &["cjk", "emoji"])),
+        (bold(), chain(&["sans-bold", "sans"], prop, &["cjk-bold", "cjk", "emoji"])),
+        (FontFamily::Monospace, chain(&["mono"], &base[&FontFamily::Monospace], &["cjk", "emoji"])),
+    ];
+    defs.families.extend(families);
     defs
 }
 
@@ -893,6 +924,36 @@ mod tests {
             assert!(visible_content(&out, screen) > 0, "blank frame at offset {off} of {}", v.total_h);
             off += h / 3.0;
         }
+    }
+
+    /// Issues #1/#2: CJK and emoji must resolve to a real glyph in every family we use
+    /// (checked only when this machine has such a font installed).
+    #[test]
+    fn cjk_and_emoji_have_glyphs() {
+        let defs = load_fonts();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(defs.clone());
+        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
+        // Ask fontdb directly, so the test doesn't trust load_fonts' own lookup.
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        let installed = |fam: &str| db.faces().any(|f| f.families.iter().any(|(n, _)| n == fam));
+        for (fam_name, sample) in [("Noto Sans CJK SC", "中文日本語한국어"), ("Noto Color Emoji", "😀🎉👍🚀")] {
+            if !installed(fam_name) {
+                eprintln!("{fam_name} not installed; skipping");
+                continue;
+            }
+            for fam in [FontFamily::Proportional, bold(), FontFamily::Monospace] {
+                let font = FontId::new(16.0, fam.clone());
+                assert!(ctx.fonts_mut(|f| f.has_glyphs(&font, sample)), "{fam:?} has no glyph for {sample}");
+                // Found isn't enough: colour emoji draw blank unless epaint's `color_fonts` is on.
+                let g = ctx.fonts_mut(|f| f.layout_no_wrap(sample.into(), font, Color32::WHITE));
+                let blank = g.rows.iter().flat_map(|r| &r.row.glyphs).filter(|g| g.uv_rect.is_nothing()).count();
+                assert_eq!(blank, 0, "{fam:?} rasterized {blank} blank glyphs in {sample}");
+            }
+        }
+        // egui's bundled monochrome emoji stays in the chain as a last resort.
+        assert!(defs.families[&FontFamily::Proportional].contains(&"NotoEmoji-Regular".to_string()));
     }
 
     /// Theme toggle rebuilds egui's font atlas; every live galley must come from the new one.

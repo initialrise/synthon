@@ -227,7 +227,7 @@ pub fn parse(src: &str) -> Vec<Block> {
                                 items.push(ListItem { checked, blocks });
                                 continue;
                             }
-                            Block::Quote(blocks) // ponytail: orphan item, can't happen with balanced events
+                            Block::Quote(blocks) // note: orphan item, can't happen with balanced events
                         }
                         Kind::Quote => Block::Quote(blocks),
                         Kind::List(start, items) => Block::List { start, items },

@@ -106,11 +106,24 @@ Reference doc: 1 MB Markdown containing 10 mermaid diagrams and 50 code blocks. 
 | Toggle full width / theme / zoom | Next frame (< 16 ms) after the first re-layout at that width |
 | 10 MB doc | Must work without blank frames. Budgets do not apply |
 
+### Measured (2026-11-11, release, X11, Mesa GL; median of 7 runs)
+
+| Doc | First frame | Peak RSS | Of which private (anon) |
+|---|---|---|---|
+| tiny | 67 ms ✅ | 97 MB ❌ | 29 MB |
+| 1 MB reference | 88 ms ✅ | 142 MB ❌ | 58 MB |
+
+- About 65–85 ms of every launch is window and GL context creation (Mesa driver load). Our own work runs in parallel with it.
+- About 53 MB of the RSS is Mesa's shared, read-only driver libraries (`libLLVM` 41 MB, `libgallium` 12 MB). Another 11–29 MB is pages of our own binary (39 MB stripped, mostly merman with all diagram types, plus syntect's syntax dumps).
+- wgpu was tried instead of glow and was worse: 108–117 ms and 121–168 MB.
+- **Decision needed:** the < 80 MB RSS budget can't be met with any GPU-backed toolkit. The proposal is to budget **private (anonymous) memory < 80 MB**, which is met at 58 MB.
+
 ## 7. Architecture (decided)
 
 - **GUI:** `eframe`/`egui` (wgpu or glow backend, Wayland + X11). egui was chosen over iced because it supports text selection across widgets.
 - **Pipeline:** `parse → Vec<Block>` once at load. On each width/zoom/theme change, lay out every block once into cached galleys/textures with known heights. Each frame paints only the blocks that intersect the viewport, using the cached heights.
-- **No virtualization tricks.** The whole document is laid out up front, so every block's height is known and no frame shows unlaid content. This is the direct fix for the white screen. Heavier virtualization is added only if a real doc misses the budget.
+- **Progressive, anchored layout (never paints an estimate).** Blocks start with estimated heights. Every block that intersects the viewport is laid out *before* it is painted, in the same frame, and the scroll offset shifts so the reading position stays put. The remaining blocks are measured in the background (~6 ms per frame) so the scrollbar converges. Galleys of blocks more than ~2 screens away are dropped and re-laid on return (same height, no jump). This is the direct fix for the white screen, and `view::tests::no_blank_frames` asserts it at every scroll offset.
+- **Startup overlap:** parsing, font loading and syntect warm-up (for the doc's languages) run on threads while the window and GL context are created.
 - **Mermaid** renders on a worker thread (the S0 spike measured ~10 ms per diagram) and is cached as a texture per (width, zoom, theme). A placeholder is shown until the diagram is ready.
 - **Distribution:** `cargo install synthon`, a single binary. Syntaxes and themes are embedded.
 

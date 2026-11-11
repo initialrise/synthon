@@ -44,3 +44,15 @@ pub struct Style {
     pub strike: bool,
     pub code: bool,
 }
+
+/// Visit every block, depth-first (quotes, list items, footnotes included).
+pub fn walk(blocks: &[Block], f: &mut impl FnMut(&Block)) {
+    for b in blocks {
+        f(b);
+        match b {
+            Block::Quote(bs) | Block::Footnote { blocks: bs, .. } => walk(bs, f),
+            Block::List { items, .. } => items.iter().for_each(|i| walk(&i.blocks, f)),
+            _ => {}
+        }
+    }
+}

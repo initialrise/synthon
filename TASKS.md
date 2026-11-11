@@ -85,6 +85,13 @@ Run `bench.sh`. If launch is > 100 ms, move mermaid to a worker thread (the pony
 
 ---
 
+## Status (2026-11-11)
+
+- ✅ W0, S0, A, B, C, D, E, K, F, G, I. 25 tests pass, clippy is clean.
+- ✅ T (time): first frame 67 ms (tiny), 88 ms (1 MB). This uses progressive layout plus threads that overlap startup work with GL init.
+- ⚠️ T (memory): 142 MB RSS, of which 58 MB is private. The rest is the Mesa driver and binary pages. Needs a budget decision (PRD §6).
+- Not done: §8.4 (selection copy) and §8.2 (tables at 10 columns) are checked by eye only. Keyboard actions are unit-tested but haven't been driven in the real window.
+
 ## Assigning work
 - Parallel agents/people: one chunk each, in its own git worktree or branch. Merges are clean because the files don't overlap.
 - If W0's contracts need to change mid-wave, change `doc.rs` in one PR and rebase the others. Don't fork the types.

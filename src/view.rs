@@ -35,6 +35,28 @@ struct Laid {
     y: f32,
     h: f32,
     items: Vec<Item>,
+    /// false = `h` is an estimate.
+    done: bool,
+    /// `items` present. Only blocks near the viewport keep them; the rest keep just `h`.
+    live: bool,
+}
+
+/// Rough height before real layout, only used for scrollbar size until the block is laid out.
+fn estimate(b: &Block, w: f32) -> f32 {
+    fn chars(spans: &[Span]) -> usize {
+        spans.iter().map(|s| s.text.len()).sum()
+    }
+    let lines = |n: usize| (n as f32 * 8.0 / w).ceil().max(1.0) * BODY * 1.5;
+    match b {
+        Block::Heading { .. } => 40.0,
+        Block::Paragraph(s) => lines(chars(s)),
+        Block::Code { text, .. } => text.lines().count() as f32 * 20.3 + 24.0,
+        Block::Mermaid(_) => 150.0,
+        Block::Quote(bs) | Block::Footnote { blocks: bs, .. } => bs.iter().map(|b| estimate(b, w) + GAP).sum(),
+        Block::List { items, .. } => items.iter().flat_map(|i| &i.blocks).map(|b| estimate(b, w) + 4.0).sum(),
+        Block::Table { rows, .. } => (rows.len() + 1) as f32 * 40.0,
+        Block::Rule => 20.0,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -128,14 +150,11 @@ fn spawn_worker(ctx: egui::Context, gen_: Arc<AtomicU64>) -> (mpsc::Sender<Job>,
 }
 
 fn collect_mermaid(blocks: &[Block], out: &mut Vec<String>) {
-    for b in blocks {
-        match b {
-            Block::Mermaid(s) => out.push(s.clone()),
-            Block::Quote(bs) | Block::Footnote { blocks: bs, .. } => collect_mermaid(bs, out),
-            Block::List { items, .. } => items.iter().for_each(|i| collect_mermaid(&i.blocks, out)),
-            _ => {}
+    crate::doc::walk(blocks, &mut |b| {
+        if let Block::Mermaid(src) = b {
+            out.push(src.clone());
         }
-    }
+    });
 }
 
 // ---------- viewer ----------
@@ -157,6 +176,8 @@ pub struct Viewer {
     zoom: f32,
     key: Option<Key>,
     laid: Vec<Laid>,
+    /// Next block for background layout.
+    cursor: usize,
     total_h: f32,
     col_w: f32,
 
@@ -171,8 +192,8 @@ pub struct Viewer {
 }
 
 impl Viewer {
-    pub fn new(ctx: &egui::Context, blocks: Vec<Block>, full_width: bool, zoom: f32) -> Self {
-        install_fonts(ctx);
+    pub fn new(ctx: &egui::Context, blocks: Vec<Block>, fonts: egui::FontDefinitions, full_width: bool, zoom: f32) -> Self {
+        ctx.set_fonts(fonts);
         ctx.options_mut(|o| o.zoom_with_keyboard = false);
         ctx.set_zoom_factor(zoom);
 
@@ -200,6 +221,7 @@ impl Viewer {
             zoom,
             key: None,
             laid: Vec::new(),
+            cursor: 0,
             total_h: 0.0,
             col_w: 0.0,
             offset: 0.0,
@@ -285,42 +307,112 @@ impl Viewer {
         changed
     }
 
-    fn relayout(&mut self, ctx: &egui::Context, only: Option<&[usize]>) {
-        let Some(key) = self.key else { return };
-        let colors = Colors::new(key.dark);
-        let w = self.col_w;
-        let slots = &self.slots;
-        let blocks = &self.blocks;
-        let starts = &self.mermaid_start;
-        let laid = &mut self.laid;
+    /// Lay out blocks `idx` (pure: reads self, returns heights + items).
+    fn lay(&self, ctx: &egui::Context, idx: &[usize]) -> Vec<(usize, f32, Vec<Item>)> {
+        let colors = Colors::new(self.key.is_some_and(|k| k.dark));
         ctx.fonts_mut(|f| {
-            let mut lay = |i: usize| {
-                let mut l = Lay { f, c: &colors, slots, next_mermaid: starts[i], items: Vec::new() };
-                let h = l.block(&blocks[i], 0.0, 0.0, w);
-                Laid { y: 0.0, h, items: l.items }
-            };
-            match only {
-                Some(idx) => idx.iter().for_each(|&i| laid[i] = lay(i)),
-                None => *laid = (0..blocks.len()).map(&mut lay).collect(),
-            }
-        });
+            idx.iter()
+                .map(|&i| {
+                    let mut l = Lay { f: &mut *f, c: &colors, slots: &self.slots, next_mermaid: self.mermaid_start[i], items: Vec::new() };
+                    let h = l.block(&self.blocks[i], 0.0, 0.0, self.col_w);
+                    (i, h, l.items)
+                })
+                .collect()
+        })
+    }
+
+    /// Lay out `idx`, keeping the block under `offset` at the same reading position.
+    /// Returns how far that position moved.
+    fn lay_anchored(&mut self, ctx: &egui::Context, idx: &[usize], offset: f32) -> f32 {
+        let (ai, af) = self.anchor_at(offset);
+        for (i, h, items) in self.lay(ctx, idx) {
+            self.laid[i] = Laid { y: 0.0, h, items, done: true, live: true };
+        }
+        self.restack();
+        self.laid.get(ai).map_or(0.0, |l| l.y + af * l.h - offset)
+    }
+
+    fn restack(&mut self) {
         let mut y = PAD;
         for l in &mut self.laid {
             l.y = y;
             y += l.h + GAP;
         }
         self.total_h = y + PAD;
-        // Restore the anchor so re-flow never jumps the reading position.
+    }
+
+    /// Width/theme/zoom changed: reset to estimates, keep the reading position.
+    fn relayout(&mut self) {
+        let w = self.col_w;
+        self.laid = self.blocks.iter().map(|b| Laid { y: 0.0, h: estimate(b, w), items: Vec::new(), done: false, live: false }).collect();
+        self.cursor = 0;
+        self.restack();
         if let Some(l) = self.laid.get(self.anchor.0) {
             self.pending_offset = Some(l.y + self.anchor.1 * l.h);
         }
     }
 
-    fn update_anchor(&mut self) {
-        let i = self.laid.partition_point(|l| l.y + l.h + GAP <= self.offset);
-        if let Some(l) = self.laid.get(i) {
-            self.anchor = (i, ((self.offset - l.y) / l.h.max(1.0)).clamp(0.0, 1.0));
+    /// Lay out every block intersecting [top, bottom] (content coords). Returns the scroll shift.
+    fn ensure_visible(&mut self, ctx: &egui::Context, top: f32, bottom: f32) -> f32 {
+        let mut shift = 0.0;
+        for _ in 0..8 {
+            let (t, b) = (top + shift, bottom + shift);
+            let first = self.laid.partition_point(|l| l.y + l.h < t);
+            let todo: Vec<usize> = (first..self.laid.len()).take_while(|&i| self.laid[i].y <= b).filter(|&i| !self.laid[i].live).collect();
+            if todo.is_empty() {
+                break;
+            }
+            shift += self.lay_anchored(ctx, &todo, t);
         }
+        shift
+    }
+
+    /// Background layout, ~6 ms per frame, so the scrollbar converges without blocking.
+    fn layout_some(&mut self, ctx: &egui::Context) {
+        let t0 = std::time::Instant::now();
+        let mut idx = Vec::new();
+        while self.cursor < self.laid.len() && t0.elapsed().as_micros() < 6000 {
+            if !self.laid[self.cursor].done {
+                let i = self.cursor;
+                // Background pass only measures: keep the height, drop the galleys.
+                let (_, h, _) = self.lay(ctx, &[i]).pop().unwrap();
+                self.laid[i] = Laid { y: self.laid[i].y, h, items: Vec::new(), done: true, live: false };
+                idx.push(i);
+            }
+            self.cursor += 1;
+        }
+        if !idx.is_empty() {
+            let shift = self.lay_anchored(ctx, &[], self.offset);
+            if shift.abs() > 0.01 {
+                self.pending_offset = Some(self.offset + shift);
+            }
+        }
+        if self.cursor < self.laid.len() {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Drop galleys of blocks well outside the viewport; they're re-laid (same height) on return.
+    fn evict(&mut self) {
+        let (lo, hi) = (self.offset - 2.0 * self.view_h, self.offset + 3.0 * self.view_h);
+        for l in &mut self.laid {
+            if l.live && (l.y + l.h < lo || l.y > hi) {
+                l.items = Vec::new();
+                l.live = false;
+            }
+        }
+    }
+
+    fn anchor_at(&self, offset: f32) -> (usize, f32) {
+        let i = self.laid.partition_point(|l| l.y + l.h + GAP <= offset);
+        match self.laid.get(i) {
+            Some(l) => (i, ((offset - l.y) / l.h.max(1.0)).clamp(0.0, 1.0)),
+            None => (self.laid.len().saturating_sub(1), 1.0),
+        }
+    }
+
+    fn update_anchor(&mut self) {
+        self.anchor = self.anchor_at(self.offset);
     }
 }
 
@@ -367,11 +459,12 @@ impl Viewer {
                 if self.key != Some(key) {
                     self.key = Some(key);
                     self.col_w = col_w.round();
-                    self.relayout(&ctx, None);
+                    self.relayout();
                 }
-                let changed = self.receive_mermaid(&ctx);
+                let changed: Vec<usize> = self.receive_mermaid(&ctx).into_iter().filter(|&i| self.laid[i].done).collect();
                 if !changed.is_empty() {
-                    self.relayout(&ctx, Some(&changed));
+                    let shift = self.lay_anchored(&ctx, &changed, self.offset);
+                    self.pending_offset = Some(self.pending_offset.unwrap_or(self.offset) + shift);
                 }
 
                 let mut sa = egui::ScrollArea::vertical()
@@ -382,8 +475,16 @@ impl Viewer {
                     sa = sa.vertical_scroll_offset(o);
                 }
                 let out = sa.show_viewport(ui, |ui, viewport| {
+                    // Never paint an estimate: lay out whatever this frame shows, and shift so
+                    // the reading position stays put even if blocks above changed height.
+                    let margin = viewport.height();
+                    let shift = self.ensure_visible(&ctx, viewport.min.y, viewport.max.y + margin);
+                    let viewport = viewport.translate(Vec2::new(0.0, shift));
+                    if shift != 0.0 {
+                        self.pending_offset = Some(viewport.min.y);
+                    }
                     ui.set_min_height(self.total_h);
-                    let origin = ui.max_rect().min + Vec2::new(((avail - self.col_w) / 2.0).max(PAD), 0.0);
+                    let origin = ui.max_rect().min + Vec2::new(((avail - self.col_w) / 2.0).max(PAD), -shift);
                     let first = self.laid.partition_point(|l| l.y + l.h < viewport.min.y);
                     for (bi, l) in self.laid.iter().enumerate().skip(first) {
                         if l.y > viewport.max.y {
@@ -395,9 +496,11 @@ impl Viewer {
                         }
                     }
                 });
-                self.offset = out.state.clamped_offset().y;
+                self.offset = self.pending_offset.unwrap_or(out.state.clamped_offset().y);
                 self.view_h = out.inner_rect.height();
                 self.update_anchor();
+                self.layout_some(&ctx);
+                self.evict();
             });
     }
 }
@@ -490,7 +593,7 @@ impl Lay<'_, '_> {
             Block::Heading { level, spans } => {
                 let size = BODY * [2.0, 1.6, 1.35, 1.15, 1.0, 0.9][(*level as usize).clamp(1, 6) - 1];
                 let y = y + if *level <= 2 { 8.0 } else { 4.0 };
-                let mut bottom = self.spans(spans, x, y, w, size, true, self.c.text);
+                let mut bottom = self.spans(spans, x, y, w, size, true);
                 if *level <= 2 {
                     bottom += 6.0;
                     self.items.push(Item::Rect {
@@ -502,7 +605,7 @@ impl Lay<'_, '_> {
                 }
                 bottom
             }
-            Block::Paragraph(spans) => self.spans(spans, x, y, w, BODY, false, self.c.text),
+            Block::Paragraph(spans) => self.spans(spans, x, y, w, BODY, false),
             Block::Code { lang, text } => self.code(text, lang.as_deref(), x, y, w),
             Block::Mermaid(src) => {
                 let id = self.next_mermaid;
@@ -583,8 +686,8 @@ impl Lay<'_, '_> {
         self.push_text(x, y, job, Vec::new())
     }
 
-    fn spans(&mut self, spans: &[Span], x: f32, y: f32, w: f32, size: f32, bold: bool, color: Color32) -> f32 {
-        let (job, links) = spans_job(spans, size, bold, color, w, self.c);
+    fn spans(&mut self, spans: &[Span], x: f32, y: f32, w: f32, size: f32, bold: bool) -> f32 {
+        let (job, links) = spans_job(spans, size, bold, self.c.text, w, self.c);
         self.push_text(x, y, job, links)
     }
 
@@ -703,7 +806,7 @@ fn spans_job(spans: &[Span], size: f32, bold_: bool, color: Color32, w: f32, c: 
 
 /// System sans (regular + bold) and mono via fontdb, egui defaults as fallback (emoji, symbols).
 /// ponytail: fontdb family guesses, not fontconfig rules; switch to fc-match if users complain.
-fn install_fonts(ctx: &egui::Context) {
+pub fn load_fonts() -> egui::FontDefinitions {
     use resvg::usvg::fontdb::{Database, Family, Query, Weight};
     let mut db = Database::new();
     db.load_system_fonts();
@@ -726,7 +829,7 @@ fn install_fonts(ctx: &egui::Context) {
     let prop = defs.families[&FontFamily::Proportional].clone();
     defs.families.insert(bold(), prop);
     add(&mut defs, "sans-bold", pick(&sans, Family::SansSerif, Weight::BOLD), bold());
-    ctx.set_fonts(defs);
+    defs
 }
 
 #[cfg(test)]
@@ -765,7 +868,7 @@ mod tests {
     #[test]
     fn no_blank_frames() {
         let ctx = egui::Context::default();
-        let mut v = Viewer::new(&ctx, big_doc(), false, 1.0);
+        let mut v = Viewer::new(&ctx, big_doc(), load_fonts(), false, 1.0);
         let (w, h) = (900.0, 700.0);
         frame(&ctx, &mut v, w, h);
         frame(&ctx, &mut v, w, h);
@@ -784,7 +887,7 @@ mod tests {
     #[test]
     fn reflow_keeps_anchor() {
         let ctx = egui::Context::default();
-        let mut v = Viewer::new(&ctx, big_doc(), false, 1.0);
+        let mut v = Viewer::new(&ctx, big_doc(), load_fonts(), false, 1.0);
         frame(&ctx, &mut v, 900.0, 700.0);
         v.pending_offset = Some(v.total_h / 2.0);
         frame(&ctx, &mut v, 900.0, 700.0);

@@ -18,8 +18,26 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     });
-    let blocks = parse::parse(&text);
-    drop(text);
+    let bench = std::env::var_os("SYNTHON_BENCH").is_some();
+    // Parse, load fonts and warm syntect while the window and GL context come up (~70 ms).
+    let prep = std::thread::spawn(move || {
+        let blocks = parse::parse(&text);
+        let mut firsts: Vec<(String, String)> = Vec::new();
+        doc::walk(&blocks, &mut |b| {
+            if let doc::Block::Code { lang: Some(l), text } = b
+                && !firsts.iter().any(|(fl, _)| fl == l)
+            {
+                firsts.push((l.clone(), text.clone()));
+            }
+        });
+        std::thread::spawn(move || {
+            for (lang, text) in firsts {
+                highlight::highlight(&text, Some(&lang), true, eframe::egui::FontId::monospace(14.0));
+            }
+        });
+        blocks
+    });
+    let fonts = std::thread::spawn(view::load_fonts);
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -40,8 +58,14 @@ fn main() {
             if let Some(t) = theme {
                 cc.egui_ctx.set_theme(t);
             }
-            let mut v = view::Viewer::new(&cc.egui_ctx, blocks, args.full_width, args.zoom as f32 / 100.0);
-            if std::env::var_os("SYNTHON_BENCH").is_some() {
+            if bench {
+                eprintln!("bench: window+gl ready {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+            }
+            let blocks = prep.join().expect("parser thread");
+            let fonts = fonts.join().expect("font thread");
+            let mut v = view::Viewer::new(&cc.egui_ctx, blocks, fonts, args.full_width, args.zoom as f32 / 100.0);
+            if bench {
+                eprintln!("bench: viewer+fonts {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
                 v.bench = Some(start);
             }
             Ok(Box::new(v))

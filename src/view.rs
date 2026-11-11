@@ -189,6 +189,9 @@ pub struct Viewer {
     /// SYNTHON_BENCH: process start; prints first-frame and diagrams-ready times, then quits.
     pub bench: Option<std::time::Instant>,
     frames: u32,
+    /// Font-atlas state after our last layout. egui rebuilds the atlas when text options change
+    /// (e.g. theme toggle) or it fills up; cached galleys then point at garbage, so we re-lay.
+    atlas: Option<(egui::epaint::text::TextOptions, f32)>,
 }
 
 impl Viewer {
@@ -230,6 +233,7 @@ impl Viewer {
             anchor: (0, -PAD),
             bench: None,
             frames: 0,
+            atlas: None,
         }
     }
 
@@ -444,6 +448,13 @@ impl Viewer {
             self.set_zoom(&ctx, self.zoom * zd);
         }
 
+        let atlas_now = ctx.fonts(|f| (f.options().clone(), f.font_atlas_fill_ratio()));
+        if let Some((opts, fill)) = &self.atlas
+            && (*opts != atlas_now.0 || atlas_now.1 < *fill)
+        {
+            self.key = None; // atlas was rebuilt: every cached galley is stale
+        }
+
         let dark = ctx.theme() == egui::Theme::Dark;
         let ppp = ctx.pixels_per_point();
         let colors = Colors::new(dark);
@@ -502,6 +513,7 @@ impl Viewer {
                 self.layout_some(&ctx);
                 self.evict();
             });
+        self.atlas = Some(ctx.fonts(|f| (f.options().clone(), f.font_atlas_fill_ratio())));
     }
 }
 
@@ -881,6 +893,47 @@ mod tests {
             assert!(visible_content(&out, screen) > 0, "blank frame at offset {off} of {}", v.total_h);
             off += h / 3.0;
         }
+    }
+
+    /// Theme toggle rebuilds egui's font atlas; every live galley must come from the new one.
+    #[test]
+    fn theme_toggle_relayouts_galleys() {
+        let ctx = egui::Context::default();
+        ctx.set_theme(egui::Theme::Light);
+        let mut v = Viewer::new(&ctx, big_doc(), load_fonts(), false, 1.0);
+        for _ in 0..3 {
+            frame(&ctx, &mut v, 900.0, 700.0);
+        }
+        // Press `t` inside a frame, like a real user (atlas rebuild lands on the *next* pass).
+        let press = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
+            events: vec![egui::Event::Key {
+                key: egui::Key::T,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            ..Default::default()
+        };
+        ctx.run_ui(press, |ui| v.show(ui)).textures_delta.clear();
+        assert_eq!(ctx.theme(), egui::Theme::Dark);
+        for _ in 0..3 {
+            frame(&ctx, &mut v, 900.0, 700.0);
+        }
+        let mut checked = 0;
+        for l in v.laid.iter().filter(|l| l.live) {
+            for item in &l.items {
+                if let Item::Text { galley, .. } = item {
+                    // Valid galleys point at the same atlas spots a fresh layout gets.
+                    let fresh = ctx.fonts_mut(|f| f.layout_job((*galley.job).clone()));
+                    let uvs = |g: &Galley| -> Vec<_> { g.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.uv_rect)).collect() };
+                    assert_eq!(uvs(galley), uvs(&fresh), "stale galley from the old font atlas");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 0);
     }
 
     /// PRD §5.3: re-flow (full width, resize) keeps the reading position.

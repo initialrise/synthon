@@ -4,7 +4,11 @@ A fast, low-memory, read-only Markdown viewer for Linux. You run `synthon file.m
 
 It's as simple as [glow](https://github.com/charmbracelet/glow), but mermaid diagrams and highlighted code render as real graphics instead of terminal text.
 
-![synthon rendering a document in the light theme](docs/screenshots/light.png)
+| Light theme | Dark theme, full width | CJK and emoji |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/light.png" alt="synthon in the light theme: headings, lists, quotes and code" width="100%"> | <img src="docs/screenshots/dark-table-mermaid.png" alt="synthon in the dark theme at full width: a wide table and a mermaid flowchart" width="100%"> | <img src="docs/screenshots/unicode.png" alt="synthon rendering Chinese, Japanese and Korean text with colour emoji" width="100%"> |
+
+_Screenshots of the synthon window. Click one to view it full size._
 
 ## Features
 
@@ -17,10 +21,6 @@ It's as simple as [glow](https://github.com/charmbracelet/glow), but mermaid dia
 - **Full-width toggle and zoom:** `f` switches between a reading column and the full window, and zoom goes from 50% to 300%.
 - **Select and copy:** select text across paragraphs, lists, tables and code, and copy it as plain text. Clicking an `http(s)` or `mailto:` link opens it in your browser.
 - **Never blank:** every block on screen is laid out before it is painted, so scrolling never shows an empty frame, and your reading position holds when the window resizes.
-
-![Wide table and mermaid diagram in the dark theme, full width](docs/screenshots/dark-table-mermaid.png)
-
-![CJK text and colour emoji](docs/screenshots/unicode.png)
 
 ## Install
 

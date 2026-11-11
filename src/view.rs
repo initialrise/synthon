@@ -448,7 +448,7 @@ impl Viewer {
             self.set_zoom(&ctx, self.zoom * zd);
         }
 
-        let atlas_now = ctx.fonts(|f| (f.options().clone(), f.font_atlas_fill_ratio()));
+        let atlas_now = ctx.fonts(|f| (*f.options(), f.font_atlas_fill_ratio()));
         if let Some((opts, fill)) = &self.atlas
             && (*opts != atlas_now.0 || atlas_now.1 < *fill)
         {
@@ -513,7 +513,7 @@ impl Viewer {
                 self.layout_some(&ctx);
                 self.evict();
             });
-        self.atlas = Some(ctx.fonts(|f| (f.options().clone(), f.font_atlas_fill_ratio())));
+        self.atlas = Some(ctx.fonts(|f| (*f.options(), f.font_atlas_fill_ratio())));
     }
 }
 

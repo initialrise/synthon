@@ -2,16 +2,32 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
-    Heading { level: u8, spans: Vec<Span> },
+    Heading {
+        level: u8,
+        spans: Vec<Span>,
+    },
     Paragraph(Vec<Span>),
     /// Frontmatter → lang "yaml"; raw block HTML → lang None.
-    Code { lang: Option<String>, text: String },
+    Code {
+        lang: Option<String>,
+        text: String,
+    },
     Mermaid(String),
     Quote(Vec<Block>),
-    List { start: Option<u64>, items: Vec<ListItem> },
-    Table { align: Vec<Align>, head: Vec<Cell>, rows: Vec<Vec<Cell>> },
+    List {
+        start: Option<u64>,
+        items: Vec<ListItem>,
+    },
+    Table {
+        align: Vec<Align>,
+        head: Vec<Cell>,
+        rows: Vec<Vec<Cell>>,
+    },
     Rule,
-    Footnote { label: String, blocks: Vec<Block> },
+    Footnote {
+        label: String,
+        blocks: Vec<Block>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

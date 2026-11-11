@@ -24,11 +24,25 @@ fn bold() -> FontFamily {
 // ---------- layout model ----------
 
 enum Item {
-    Text { pos: Vec2, galley: Arc<Galley>, links: Vec<(Range<usize>, String)> },
-    Rect { rect: Rect, fill: Color32, stroke: Stroke },
+    Text {
+        pos: Vec2,
+        galley: Arc<Galley>,
+        links: Vec<(Range<usize>, String)>,
+    },
+    Rect {
+        rect: Rect,
+        fill: Color32,
+        stroke: Stroke,
+    },
     /// Code block: background `rect`, galley may be wider → horizontal scroll inside.
-    Code { rect: Rect, galley: Arc<Galley> },
-    Mermaid { rect: Rect, id: usize },
+    Code {
+        rect: Rect,
+        galley: Arc<Galley>,
+    },
+    Mermaid {
+        rect: Rect,
+        id: usize,
+    },
 }
 
 struct Laid {
@@ -52,8 +66,14 @@ fn estimate(b: &Block, w: f32) -> f32 {
         Block::Paragraph(s) => lines(chars(s)),
         Block::Code { text, .. } => text.lines().count() as f32 * 20.3 + 24.0,
         Block::Mermaid(_) => 150.0,
-        Block::Quote(bs) | Block::Footnote { blocks: bs, .. } => bs.iter().map(|b| estimate(b, w) + GAP).sum(),
-        Block::List { items, .. } => items.iter().flat_map(|i| &i.blocks).map(|b| estimate(b, w) + 4.0).sum(),
+        Block::Quote(bs) | Block::Footnote { blocks: bs, .. } => {
+            bs.iter().map(|b| estimate(b, w) + GAP).sum()
+        }
+        Block::List { items, .. } => items
+            .iter()
+            .flat_map(|i| &i.blocks)
+            .map(|b| estimate(b, w) + 4.0)
+            .sum(),
         Block::Table { rows, .. } => (rows.len() + 1) as f32 * 40.0,
         Block::Rule => 20.0,
     }
@@ -105,7 +125,11 @@ impl Colors {
         }
     }
     fn bg(dark: bool) -> Color32 {
-        if dark { Color32::from_rgb(0x0d, 0x11, 0x17) } else { Color32::WHITE }
+        if dark {
+            Color32::from_rgb(0x0d, 0x11, 0x17)
+        } else {
+            Color32::WHITE
+        }
     }
 }
 
@@ -128,7 +152,10 @@ struct Job {
 
 type Done = (u64, usize, Result<egui::ColorImage, String>, f32);
 
-fn spawn_worker(ctx: egui::Context, gen_: Arc<AtomicU64>) -> (mpsc::Sender<Job>, mpsc::Receiver<Done>) {
+fn spawn_worker(
+    ctx: egui::Context,
+    gen_: Arc<AtomicU64>,
+) -> (mpsc::Sender<Job>, mpsc::Receiver<Done>) {
     let (jtx, jrx) = mpsc::channel::<Job>();
     let (dtx, drx) = mpsc::channel::<Done>();
     std::thread::spawn(move || {
@@ -138,8 +165,9 @@ fn spawn_worker(ctx: egui::Context, gen_: Arc<AtomicU64>) -> (mpsc::Sender<Job>,
                 continue; // stale: theme/zoom changed since it was queued
             }
             // Render at natural size × scale; the view downsizes on the GPU if the column is narrower.
-            let r = std::panic::catch_unwind(|| crate::mermaid::render(&j.src, j.dark, 8192, j.scale))
-                .unwrap_or_else(|_| Err("renderer panicked".into()));
+            let r =
+                std::panic::catch_unwind(|| crate::mermaid::render(&j.src, j.dark, 8192, j.scale))
+                    .unwrap_or_else(|_| Err("renderer panicked".into()));
             if dtx.send((j.gen_, j.id, r, j.scale)).is_err() {
                 break;
             }
@@ -195,7 +223,13 @@ pub struct Viewer {
 }
 
 impl Viewer {
-    pub fn new(ctx: &egui::Context, blocks: Vec<Block>, fonts: egui::FontDefinitions, full_width: bool, zoom: f32) -> Self {
+    pub fn new(
+        ctx: &egui::Context,
+        blocks: Vec<Block>,
+        fonts: egui::FontDefinitions,
+        full_width: bool,
+        zoom: f32,
+    ) -> Self {
         ctx.set_fonts(fonts);
         ctx.options_mut(|o| o.zoom_with_keyboard = false);
         ctx.set_zoom_factor(zoom);
@@ -278,7 +312,13 @@ impl Viewer {
         self.mermaid_key = Some(k);
         let g = self.gen_.fetch_add(1, Ordering::Relaxed) + 1;
         for (id, src) in self.mermaid_src.iter().enumerate() {
-            let _ = self.jobs.send(Job { gen_: g, id, src: src.clone(), dark, scale: ppp });
+            let _ = self.jobs.send(Job {
+                gen_: g,
+                id,
+                src: src.clone(),
+                dark,
+                scale: ppp,
+            });
         }
     }
 
@@ -317,7 +357,13 @@ impl Viewer {
         ctx.fonts_mut(|f| {
             idx.iter()
                 .map(|&i| {
-                    let mut l = Lay { f: &mut *f, c: &colors, slots: &self.slots, next_mermaid: self.mermaid_start[i], items: Vec::new() };
+                    let mut l = Lay {
+                        f: &mut *f,
+                        c: &colors,
+                        slots: &self.slots,
+                        next_mermaid: self.mermaid_start[i],
+                        items: Vec::new(),
+                    };
                     let h = l.block(&self.blocks[i], 0.0, 0.0, self.col_w);
                     (i, h, l.items)
                 })
@@ -330,10 +376,18 @@ impl Viewer {
     fn lay_anchored(&mut self, ctx: &egui::Context, idx: &[usize], offset: f32) -> f32 {
         let (ai, af) = self.anchor_at(offset);
         for (i, h, items) in self.lay(ctx, idx) {
-            self.laid[i] = Laid { y: 0.0, h, items, done: true, live: true };
+            self.laid[i] = Laid {
+                y: 0.0,
+                h,
+                items,
+                done: true,
+                live: true,
+            };
         }
         self.restack();
-        self.laid.get(ai).map_or(0.0, |l| l.y + af.min(l.h) - offset)
+        self.laid
+            .get(ai)
+            .map_or(0.0, |l| l.y + af.min(l.h) - offset)
     }
 
     fn restack(&mut self) {
@@ -348,7 +402,17 @@ impl Viewer {
     /// Width/theme/zoom changed: reset to estimates, keep the reading position.
     fn relayout(&mut self) {
         let w = self.col_w;
-        self.laid = self.blocks.iter().map(|b| Laid { y: 0.0, h: estimate(b, w), items: Vec::new(), done: false, live: false }).collect();
+        self.laid = self
+            .blocks
+            .iter()
+            .map(|b| Laid {
+                y: 0.0,
+                h: estimate(b, w),
+                items: Vec::new(),
+                done: false,
+                live: false,
+            })
+            .collect();
         self.cursor = 0;
         self.restack();
         if let Some(l) = self.laid.get(self.anchor.0) {
@@ -362,7 +426,10 @@ impl Viewer {
         for _ in 0..8 {
             let (t, b) = (top + shift, bottom + shift);
             let first = self.laid.partition_point(|l| l.y + l.h < t);
-            let todo: Vec<usize> = (first..self.laid.len()).take_while(|&i| self.laid[i].y <= b).filter(|&i| !self.laid[i].live).collect();
+            let todo: Vec<usize> = (first..self.laid.len())
+                .take_while(|&i| self.laid[i].y <= b)
+                .filter(|&i| !self.laid[i].live)
+                .collect();
             if todo.is_empty() {
                 break;
             }
@@ -380,7 +447,13 @@ impl Viewer {
                 let i = self.cursor;
                 // Background pass only measures: keep the height, drop the galleys.
                 let (_, h, _) = self.lay(ctx, &[i]).pop().unwrap();
-                self.laid[i] = Laid { y: self.laid[i].y, h, items: Vec::new(), done: true, live: false };
+                self.laid[i] = Laid {
+                    y: self.laid[i].y,
+                    h,
+                    items: Vec::new(),
+                    done: true,
+                    live: false,
+                };
                 idx.push(i);
             }
             self.cursor += 1;
@@ -398,7 +471,10 @@ impl Viewer {
 
     /// Drop galleys of blocks well outside the viewport; they're re-laid (same height) on return.
     fn evict(&mut self) {
-        let (lo, hi) = (self.offset - 2.0 * self.view_h, self.offset + 3.0 * self.view_h);
+        let (lo, hi) = (
+            self.offset - 2.0 * self.view_h,
+            self.offset + 3.0 * self.view_h,
+        );
         for l in &mut self.laid {
             if l.live && (l.y + l.h < lo || l.y > hi) {
                 l.items = Vec::new();
@@ -426,11 +502,21 @@ impl eframe::App for Viewer {
         if let Some(t0) = self.bench {
             self.frames += 1;
             if self.frames == 1 {
-                eprintln!("bench: first frame {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
+                eprintln!(
+                    "bench: first frame {:.1} ms",
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
             }
-            let pending = self.slots.iter().any(|s| s.tex.is_none() && s.err.is_none());
+            let pending = self
+                .slots
+                .iter()
+                .any(|s| s.tex.is_none() && s.err.is_none());
             if !pending {
-                eprintln!("bench: diagrams ready {:.1} ms ({} frames)", t0.elapsed().as_secs_f64() * 1e3, self.frames);
+                eprintln!(
+                    "bench: diagrams ready {:.1} ms ({} frames)",
+                    t0.elapsed().as_secs_f64() * 1e3,
+                    self.frames
+                );
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -464,15 +550,27 @@ impl Viewer {
             .frame(egui::Frame::new().fill(Colors::bg(dark)))
             .show(ui, |ui| {
                 let avail = ui.available_width();
-                let col_w = if self.full_width { avail - 2.0 * PAD } else { READING_WIDTH.min(avail - 2.0 * PAD) }
-                    .max(100.0);
-                let key = Key { col_w: col_w.round() as u32, ppp: ppp.to_bits(), dark };
+                let col_w = if self.full_width {
+                    avail - 2.0 * PAD
+                } else {
+                    READING_WIDTH.min(avail - 2.0 * PAD)
+                }
+                .max(100.0);
+                let key = Key {
+                    col_w: col_w.round() as u32,
+                    ppp: ppp.to_bits(),
+                    dark,
+                };
                 if self.key != Some(key) {
                     self.key = Some(key);
                     self.col_w = col_w.round();
                     self.relayout();
                 }
-                let changed: Vec<usize> = self.receive_mermaid(&ctx).into_iter().filter(|&i| self.laid[i].done).collect();
+                let changed: Vec<usize> = self
+                    .receive_mermaid(&ctx)
+                    .into_iter()
+                    .filter(|&i| self.laid[i].done)
+                    .collect();
                 if !changed.is_empty() {
                     let shift = self.lay_anchored(&ctx, &changed, self.offset);
                     self.pending_offset = Some(self.pending_offset.unwrap_or(self.offset) + shift);
@@ -481,7 +579,10 @@ impl Viewer {
                 let mut sa = egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .content_margin(0.0)
-                    .scroll_source(ScrollSource { drag: ScrollSource::NONE.drag, ..ScrollSource::ALL });
+                    .scroll_source(ScrollSource {
+                        drag: ScrollSource::NONE.drag,
+                        ..ScrollSource::ALL
+                    });
                 if let Some(o) = self.pending_offset.take() {
                     sa = sa.vertical_scroll_offset(o);
                 }
@@ -495,7 +596,8 @@ impl Viewer {
                         self.pending_offset = Some(viewport.min.y);
                     }
                     ui.set_min_height(self.total_h);
-                    let origin = ui.max_rect().min + Vec2::new(((avail - self.col_w) / 2.0).max(PAD), -shift);
+                    let origin = ui.max_rect().min
+                        + Vec2::new(((avail - self.col_w) / 2.0).max(PAD), -shift);
                     let first = self.laid.partition_point(|l| l.y + l.h < viewport.min.y);
                     for (bi, l) in self.laid.iter().enumerate().skip(first) {
                         if l.y > viewport.max.y {
@@ -503,7 +605,14 @@ impl Viewer {
                         }
                         let o = origin + Vec2::new(0.0, l.y);
                         for (ii, item) in l.items.iter().enumerate() {
-                            paint(ui, item, o, ui.scope_id().with((bi, ii)), &colors, &self.slots);
+                            paint(
+                                ui,
+                                item,
+                                o,
+                                ui.scope_id().with((bi, ii)),
+                                &colors,
+                                &self.slots,
+                            );
                         }
                     }
                 });
@@ -520,21 +629,31 @@ impl Viewer {
 fn paint(ui: &mut egui::Ui, item: &Item, o: Pos2, id: egui::Id, c: &Colors, slots: &[Slot]) {
     match item {
         Item::Rect { rect, fill, stroke } => {
-            ui.painter().rect(rect.translate(o.to_vec2()), CornerRadius::same(3), *fill, *stroke, egui::StrokeKind::Inside);
+            ui.painter().rect(
+                rect.translate(o.to_vec2()),
+                CornerRadius::same(3),
+                *fill,
+                *stroke,
+                egui::StrokeKind::Inside,
+            );
         }
         Item::Text { pos, galley, links } => text(ui, o + *pos, galley, id, links, c.text),
         Item::Code { rect, galley } => {
             let r = rect.translate(o.to_vec2());
-            ui.painter().rect_filled(r, CornerRadius::same(6), c.code_bg);
+            ui.painter()
+                .rect_filled(r, CornerRadius::same(6), c.code_bg);
             let inner = r.shrink(12.0);
             if galley.size().x <= inner.width() + 0.5 {
                 text(ui, inner.min, galley, id, &[], c.text);
             } else {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(inner).id_salt(id), |ui| {
-                    egui::ScrollArea::horizontal().id_salt(id).auto_shrink([false, true]).show(ui, |ui| {
-                        let (r, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
-                        text(ui, r.min, galley, id.with("c"), &[], c.text);
-                    });
+                    egui::ScrollArea::horizontal()
+                        .id_salt(id)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let (r, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+                            text(ui, r.min, galley, id.with("c"), &[], c.text);
+                        });
                 });
             }
         }
@@ -542,11 +661,28 @@ fn paint(ui: &mut egui::Ui, item: &Item, o: Pos2, id: egui::Id, c: &Colors, slot
             let r = rect.translate(o.to_vec2());
             match &slots[*m].tex {
                 Some((tex, _)) => {
-                    ui.painter().image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    ui.painter().image(
+                        tex.id(),
+                        r,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
                 }
                 None => {
-                    ui.painter().rect(r, CornerRadius::same(6), c.code_bg, Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
-                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "rendering diagram…", FontId::proportional(13.0), c.weak);
+                    ui.painter().rect(
+                        r,
+                        CornerRadius::same(6),
+                        c.code_bg,
+                        Stroke::new(1.0, c.border),
+                        egui::StrokeKind::Inside,
+                    );
+                    ui.painter().text(
+                        r.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "rendering diagram…",
+                        FontId::proportional(13.0),
+                        c.weak,
+                    );
                 }
             }
         }
@@ -554,7 +690,14 @@ fn paint(ui: &mut egui::Ui, item: &Item, o: Pos2, id: egui::Id, c: &Colors, slot
 }
 
 /// Selectable text with clickable links.
-fn text(ui: &mut egui::Ui, pos: Pos2, galley: &Arc<Galley>, id: egui::Id, links: &[(Range<usize>, String)], color: Color32) {
+fn text(
+    ui: &mut egui::Ui,
+    pos: Pos2,
+    galley: &Arc<Galley>,
+    id: egui::Id,
+    links: &[(Range<usize>, String)],
+    color: Color32,
+) {
     let rect = Rect::from_min_size(pos, galley.size());
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     LabelSelectionState::label_text_selection(ui, &resp, pos, galley.clone(), color, Stroke::NONE);
@@ -564,12 +707,18 @@ fn text(ui: &mut egui::Ui, pos: Pos2, galley: &Arc<Galley>, id: egui::Id, links:
     let Some(p) = resp.hover_pos() else { return };
     let ci = galley.cursor_from_pos(p - pos).index.0;
     // cursor_from_pos rounds to the nearest gap; check the char to either side.
-    let hit = links.iter().find(|(r, _)| r.contains(&ci) || (ci > 0 && r.contains(&(ci - 1)) && r.end == ci));
+    let hit = links
+        .iter()
+        .find(|(r, _)| r.contains(&ci) || (ci > 0 && r.contains(&(ci - 1)) && r.end == ci));
     if let Some((_, url)) = hit {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         let clicked = resp.clicked();
         resp.on_hover_text_at_pointer(url.as_str());
-        if clicked && (url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
+        if clicked
+            && (url.starts_with("http://")
+                || url.starts_with("https://")
+                || url.starts_with("mailto:"))
+        {
             let url = url.clone();
             std::thread::spawn(move || {
                 let _ = std::process::Command::new("xdg-open").arg(url).status();
@@ -603,7 +752,8 @@ impl Lay<'_, '_> {
     fn block(&mut self, b: &Block, x: f32, y: f32, w: f32) -> f32 {
         match b {
             Block::Heading { level, spans } => {
-                let size = BODY * [2.0, 1.6, 1.35, 1.15, 1.0, 0.9][(*level as usize).clamp(1, 6) - 1];
+                let size =
+                    BODY * [2.0, 1.6, 1.35, 1.15, 1.0, 0.9][(*level as usize).clamp(1, 6) - 1];
                 let y = y + if *level <= 2 { 8.0 } else { 4.0 };
                 let mut bottom = self.spans(spans, x, y, w, size, true);
                 if *level <= 2 {
@@ -632,7 +782,10 @@ impl Lay<'_, '_> {
                     Some((_, s)) => *s,
                     None => Vec2::new(w, 150.0),
                 };
-                self.items.push(Item::Mermaid { rect: Rect::from_min_size(Pos2::new(x, y), size), id });
+                self.items.push(Item::Mermaid {
+                    rect: Rect::from_min_size(Pos2::new(x, y), size),
+                    id,
+                });
                 y + size.y
             }
             Block::Quote(bs) => {
@@ -653,12 +806,28 @@ impl Lay<'_, '_> {
                     }
                     match (it.checked, start) {
                         (Some(done), _) => {
-                            let r = Rect::from_min_size(Pos2::new(x + 4.0, y + 5.0), Vec2::splat(13.0));
-                            let fill = if done { self.c.link } else { Color32::TRANSPARENT };
-                            self.items.push(Item::Rect { rect: r, fill, stroke: Stroke::new(1.0, self.c.weak) });
+                            let r =
+                                Rect::from_min_size(Pos2::new(x + 4.0, y + 5.0), Vec2::splat(13.0));
+                            let fill = if done {
+                                self.c.link
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            self.items.push(Item::Rect {
+                                rect: r,
+                                fill,
+                                stroke: Stroke::new(1.0, self.c.weak),
+                            });
                         }
                         (None, Some(s)) => {
-                            self.plain(&format!("{}.", s + n as u64), x, y, indent, BODY, self.c.weak);
+                            self.plain(
+                                &format!("{}.", s + n as u64),
+                                x,
+                                y,
+                                indent,
+                                BODY,
+                                self.c.weak,
+                            );
                         }
                         (None, None) => {
                             self.plain("•", x + 6.0, y, indent, BODY, self.c.weak);
@@ -685,10 +854,20 @@ impl Lay<'_, '_> {
         }
     }
 
-    fn push_text(&mut self, x: f32, y: f32, job: LayoutJob, links: Vec<(Range<usize>, String)>) -> f32 {
+    fn push_text(
+        &mut self,
+        x: f32,
+        y: f32,
+        job: LayoutJob,
+        links: Vec<(Range<usize>, String)>,
+    ) -> f32 {
         let galley = self.f.layout_job(job);
         let h = galley.size().y;
-        self.items.push(Item::Text { pos: Vec2::new(x, y), galley, links });
+        self.items.push(Item::Text {
+            pos: Vec2::new(x, y),
+            galley,
+            links,
+        });
         y + h
     }
 
@@ -711,16 +890,28 @@ impl Lay<'_, '_> {
         }
         let galley = self.f.layout_job(job);
         let h = galley.size().y + 24.0;
-        self.items.push(Item::Code { rect: Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h)), galley });
+        self.items.push(Item::Code {
+            rect: Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h)),
+            galley,
+        });
         y + h
     }
 
-    fn table(&mut self, align: &[Align], head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], x: f32, y: f32, w: f32) -> f32 {
+    fn table(
+        &mut self,
+        align: &[Align],
+        head: &[Vec<Span>],
+        rows: &[Vec<Vec<Span>>],
+        x: f32,
+        y: f32,
+        w: f32,
+    ) -> f32 {
         let ncol = head.len().max(rows.iter().map(Vec::len).max().unwrap_or(0));
         if ncol == 0 {
             return y;
         }
-        let all_rows = std::iter::once((head, true)).chain(rows.iter().map(|r| (r.as_slice(), false)));
+        let all_rows =
+            std::iter::once((head, true)).chain(rows.iter().map(|r| (r.as_slice(), false)));
         // natural = unwrapped width, min = widest word (ponytail: words measured unstyled, fine for typical tables)
         let mut natural = vec![0.0f32; ncol];
         let mut min = vec![0.0f32; ncol];
@@ -730,7 +921,8 @@ impl Lay<'_, '_> {
                 natural[ci] = natural[ci].max(self.f.layout_job(job).size().x + 2.0 * CELL_PAD);
                 let s: String = cell.iter().map(|s| s.text.as_str()).collect();
                 for word in s.split_whitespace() {
-                    let job = LayoutJob::single_section(word.to_owned(), fmt(BODY, is_head, self.c.text));
+                    let job =
+                        LayoutJob::single_section(word.to_owned(), fmt(BODY, is_head, self.c.text));
                     min[ci] = min[ci].max(self.f.layout_job(job).size().x + 2.0 * CELL_PAD);
                 }
             }
@@ -742,7 +934,14 @@ impl Lay<'_, '_> {
             let mut row_h: f32 = 0.0;
             for (ci, cw) in widths.iter().enumerate() {
                 let cell = row.get(ci).map(Vec::as_slice).unwrap_or(&[]);
-                let (job, links) = spans_job(cell, BODY, is_head, self.c.text, cw - 2.0 * CELL_PAD, self.c);
+                let (job, links) = spans_job(
+                    cell,
+                    BODY,
+                    is_head,
+                    self.c.text,
+                    cw - 2.0 * CELL_PAD,
+                    self.c,
+                );
                 let g = self.f.layout_job(job);
                 row_h = row_h.max(g.size().y + 2.0 * CELL_PAD);
                 galleys.push((g, links));
@@ -750,14 +949,21 @@ impl Lay<'_, '_> {
             let mut cx = x;
             if is_head {
                 self.items.push(Item::Rect {
-                    rect: Rect::from_min_size(Pos2::new(x, ty), Vec2::new(widths.iter().sum(), row_h)),
+                    rect: Rect::from_min_size(
+                        Pos2::new(x, ty),
+                        Vec2::new(widths.iter().sum(), row_h),
+                    ),
                     fill: self.c.head_bg,
                     stroke: Stroke::NONE,
                 });
             }
             for (ci, ((g, links), cw)) in galleys.into_iter().zip(&widths).enumerate() {
                 let cell = Rect::from_min_size(Pos2::new(cx, ty), Vec2::new(*cw, row_h));
-                self.items.push(Item::Rect { rect: cell, fill: Color32::TRANSPARENT, stroke: Stroke::new(1.0, self.c.border) });
+                self.items.push(Item::Rect {
+                    rect: cell,
+                    fill: Color32::TRANSPARENT,
+                    stroke: Stroke::new(1.0, self.c.border),
+                });
                 let slack = cw - 2.0 * CELL_PAD - g.size().x;
                 let dx = match align.get(ci) {
                     Some(Align::Center) => slack / 2.0,
@@ -765,7 +971,11 @@ impl Lay<'_, '_> {
                     _ => 0.0,
                 }
                 .max(0.0);
-                self.items.push(Item::Text { pos: Vec2::new(cx + CELL_PAD + dx, ty + CELL_PAD), galley: g, links });
+                self.items.push(Item::Text {
+                    pos: Vec2::new(cx + CELL_PAD + dx, ty + CELL_PAD),
+                    galley: g,
+                    links,
+                });
                 cx += cw;
             }
             ty += row_h;
@@ -776,14 +986,28 @@ impl Lay<'_, '_> {
 
 fn fmt(size: f32, bold_: bool, color: Color32) -> TextFormat {
     TextFormat {
-        font_id: FontId::new(size, if bold_ { bold() } else { FontFamily::Proportional }),
+        font_id: FontId::new(
+            size,
+            if bold_ {
+                bold()
+            } else {
+                FontFamily::Proportional
+            },
+        ),
         line_height: Some(size * 1.5),
         color,
         ..Default::default()
     }
 }
 
-fn spans_job(spans: &[Span], size: f32, bold_: bool, color: Color32, w: f32, c: &Colors) -> (LayoutJob, Vec<(Range<usize>, String)>) {
+fn spans_job(
+    spans: &[Span],
+    size: f32,
+    bold_: bool,
+    color: Color32,
+    w: f32,
+    c: &Colors,
+) -> (LayoutJob, Vec<(Range<usize>, String)>) {
     let mut job = LayoutJob::default();
     job.wrap.max_width = w;
     let mut links = Vec::new();
@@ -824,30 +1048,65 @@ pub fn load_fonts() -> egui::FontDefinitions {
     use resvg::usvg::fontdb::{Database, Family, Query, Source, Weight};
     let mut db = Database::new();
     db.load_system_fonts();
-    let find = |names: &[&str], generic: Option<Family>, weight: Weight| -> Option<egui::FontData> {
-        let fams: Vec<Family> = names.iter().map(|n| Family::Name(n)).chain(generic).collect();
-        let id = db.query(&Query { families: &fams, weight, ..Default::default() })?;
-        let (src, index) = db.face_source(id)?;
-        let blob: Arc<dyn AsRef<[u8]> + Send + Sync> = match src {
-            Source::File(path) => {
-                let file = std::fs::File::open(path).ok()?;
-                // SAFETY: system font files are not modified while we run; if one were truncated
-                // underneath us, reading its glyphs could fault (same trade-off as fontdb's own mmap).
-                Arc::new(unsafe { memmap2::Mmap::map(&file) }.ok()?)
-            }
-            Source::Binary(b) | Source::SharedFile(_, b) => b,
+    let find =
+        |names: &[&str], generic: Option<Family>, weight: Weight| -> Option<egui::FontData> {
+            let fams: Vec<Family> = names
+                .iter()
+                .map(|n| Family::Name(n))
+                .chain(generic)
+                .collect();
+            let id = db.query(&Query {
+                families: &fams,
+                weight,
+                ..Default::default()
+            })?;
+            let (src, index) = db.face_source(id)?;
+            let blob: Arc<dyn AsRef<[u8]> + Send + Sync> = match src {
+                Source::File(path) => {
+                    let file = std::fs::File::open(path).ok()?;
+                    // SAFETY: system font files are not modified while we run; if one were truncated
+                    // underneath us, reading its glyphs could fault (same trade-off as fontdb's own mmap).
+                    Arc::new(unsafe { memmap2::Mmap::map(&file) }.ok()?)
+                }
+                Source::Binary(b) | Source::SharedFile(_, b) => b,
+            };
+            Some(egui::FontData::from_blob(blob, index))
         };
-        Some(egui::FontData::from_blob(blob, index))
-    };
-    let sans = ["Inter", "Noto Sans", "DejaVu Sans", "Liberation Sans", "Ubuntu"];
-    let mono = ["JetBrains Mono", "Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono"];
-    let cjk = ["Noto Sans CJK SC", "Noto Sans CJK JP", "Source Han Sans SC", "WenQuanYi Micro Hei", "Droid Sans Fallback"];
-    let emoji = ["Noto Color Emoji", "Twemoji", "JoyPixels", "Apple Color Emoji"];
+    let sans = [
+        "Inter",
+        "Noto Sans",
+        "DejaVu Sans",
+        "Liberation Sans",
+        "Ubuntu",
+    ];
+    let mono = [
+        "JetBrains Mono",
+        "Noto Sans Mono",
+        "DejaVu Sans Mono",
+        "Liberation Mono",
+        "Ubuntu Mono",
+    ];
+    let cjk = [
+        "Noto Sans CJK SC",
+        "Noto Sans CJK JP",
+        "Source Han Sans SC",
+        "WenQuanYi Micro Hei",
+        "Droid Sans Fallback",
+    ];
+    let emoji = [
+        "Noto Color Emoji",
+        "Twemoji",
+        "JoyPixels",
+        "Apple Color Emoji",
+    ];
 
     let mut defs = egui::FontDefinitions::default();
     for (name, data) in [
         ("sans", find(&sans, Some(Family::SansSerif), Weight::NORMAL)),
-        ("sans-bold", find(&sans, Some(Family::SansSerif), Weight::BOLD)),
+        (
+            "sans-bold",
+            find(&sans, Some(Family::SansSerif), Weight::BOLD),
+        ),
         ("mono", find(&mono, Some(Family::Monospace), Weight::NORMAL)),
         ("cjk", find(&cjk, None, Weight::NORMAL)),
         ("cjk-bold", find(&cjk, None, Weight::BOLD)),
@@ -861,15 +1120,39 @@ pub fn load_fonts() -> egui::FontDefinitions {
     // first, and CJK + colour emoji just before egui's icon/monochrome-emoji tail.
     let base = defs.families.clone();
     let chain = |primary: &[&str], base: &[String], fallback: &[&str]| -> Vec<String> {
-        let split = base.iter().position(|n| n == "egui-icons").unwrap_or(base.len());
-        let ours = |names: &[&str]| names.iter().filter(|n| defs.font_data.contains_key(**n)).map(|n| n.to_string()).collect::<Vec<_>>();
-        [ours(primary), base[..split].to_vec(), ours(fallback), base[split..].to_vec()].concat()
+        let split = base
+            .iter()
+            .position(|n| n == "egui-icons")
+            .unwrap_or(base.len());
+        let ours = |names: &[&str]| {
+            names
+                .iter()
+                .filter(|n| defs.font_data.contains_key(**n))
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+        };
+        [
+            ours(primary),
+            base[..split].to_vec(),
+            ours(fallback),
+            base[split..].to_vec(),
+        ]
+        .concat()
     };
     let prop = &base[&FontFamily::Proportional];
     let families = [
-        (FontFamily::Proportional, chain(&["sans"], prop, &["cjk", "emoji"])),
-        (bold(), chain(&["sans-bold", "sans"], prop, &["cjk-bold", "cjk", "emoji"])),
-        (FontFamily::Monospace, chain(&["mono"], &base[&FontFamily::Monospace], &["cjk", "emoji"])),
+        (
+            FontFamily::Proportional,
+            chain(&["sans"], prop, &["cjk", "emoji"]),
+        ),
+        (
+            bold(),
+            chain(&["sans-bold", "sans"], prop, &["cjk-bold", "cjk", "emoji"]),
+        ),
+        (
+            FontFamily::Monospace,
+            chain(&["mono"], &base[&FontFamily::Monospace], &["cjk", "emoji"]),
+        ),
     ];
     defs.families.extend(families);
     defs
@@ -894,16 +1177,24 @@ mod tests {
         fn count(s: &Shape, screen: Rect) -> usize {
             match s {
                 Shape::Vec(v) => v.iter().map(|s| count(s, screen)).sum(),
-                Shape::Text(t) if !t.galley.is_empty() => t.visual_bounding_rect().intersects(screen) as usize,
+                Shape::Text(t) if !t.galley.is_empty() => {
+                    t.visual_bounding_rect().intersects(screen) as usize
+                }
                 Shape::Mesh(m) => m.calc_bounds().intersects(screen) as usize,
                 _ => 0,
             }
         }
-        out.shapes.iter().filter(|c| c.clip_rect.intersects(screen)).map(|c| count(&c.shape, screen)).sum()
+        out.shapes
+            .iter()
+            .filter(|c| c.clip_rect.intersects(screen))
+            .map(|c| count(&c.shape, screen))
+            .sum()
     }
 
     fn big_doc() -> Vec<Block> {
-        let sample = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample.md")).unwrap();
+        let sample =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample.md"))
+                .unwrap();
         crate::parse::parse(&sample.repeat(40))
     }
 
@@ -921,7 +1212,11 @@ mod tests {
         while off < v.total_h {
             v.pending_offset = Some(off);
             let out = frame(&ctx, &mut v, w, h);
-            assert!(visible_content(&out, screen) > 0, "blank frame at offset {off} of {}", v.total_h);
+            assert!(
+                visible_content(&out, screen) > 0,
+                "blank frame at offset {off} of {}",
+                v.total_h
+            );
             off += h / 3.0;
         }
     }
@@ -933,27 +1228,45 @@ mod tests {
         let defs = load_fonts();
         let ctx = egui::Context::default();
         ctx.set_fonts(defs.clone());
-        ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
+        ctx.run_ui(Default::default(), |_| {})
+            .textures_delta
+            .clear();
         // Ask fontdb directly, so the test doesn't trust load_fonts' own lookup.
         let mut db = resvg::usvg::fontdb::Database::new();
         db.load_system_fonts();
         let installed = |fam: &str| db.faces().any(|f| f.families.iter().any(|(n, _)| n == fam));
-        for (fam_name, sample) in [("Noto Sans CJK SC", "中文日本語한국어"), ("Noto Color Emoji", "😀🎉👍🚀")] {
+        for (fam_name, sample) in [
+            ("Noto Sans CJK SC", "中文日本語한국어"),
+            ("Noto Color Emoji", "😀🎉👍🚀"),
+        ] {
             if !installed(fam_name) {
                 eprintln!("{fam_name} not installed; skipping");
                 continue;
             }
             for fam in [FontFamily::Proportional, bold(), FontFamily::Monospace] {
                 let font = FontId::new(16.0, fam.clone());
-                assert!(ctx.fonts_mut(|f| f.has_glyphs(&font, sample)), "{fam:?} has no glyph for {sample}");
+                assert!(
+                    ctx.fonts_mut(|f| f.has_glyphs(&font, sample)),
+                    "{fam:?} has no glyph for {sample}"
+                );
                 // Found isn't enough: colour emoji draw blank unless epaint's `color_fonts` is on.
                 let g = ctx.fonts_mut(|f| f.layout_no_wrap(sample.into(), font, Color32::WHITE));
-                let blank = g.rows.iter().flat_map(|r| &r.row.glyphs).filter(|g| g.uv_rect.is_nothing()).count();
-                assert_eq!(blank, 0, "{fam:?} rasterized {blank} blank glyphs in {sample}");
+                let blank = g
+                    .rows
+                    .iter()
+                    .flat_map(|r| &r.row.glyphs)
+                    .filter(|g| g.uv_rect.is_nothing())
+                    .count();
+                assert_eq!(
+                    blank, 0,
+                    "{fam:?} rasterized {blank} blank glyphs in {sample}"
+                );
             }
         }
         // egui's bundled monochrome emoji stays in the chain as a last resort.
-        assert!(defs.families[&FontFamily::Proportional].contains(&"NotoEmoji-Regular".to_string()));
+        assert!(
+            defs.families[&FontFamily::Proportional].contains(&"NotoEmoji-Regular".to_string())
+        );
     }
 
     /// Theme toggle rebuilds egui's font atlas; every live galley must come from the new one.
@@ -988,8 +1301,17 @@ mod tests {
                 if let Item::Text { galley, .. } = item {
                     // Valid galleys point at the same atlas spots a fresh layout gets.
                     let fresh = ctx.fonts_mut(|f| f.layout_job((*galley.job).clone()));
-                    let uvs = |g: &Galley| -> Vec<_> { g.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.uv_rect)).collect() };
-                    assert_eq!(uvs(galley), uvs(&fresh), "stale galley from the old font atlas");
+                    let uvs = |g: &Galley| -> Vec<_> {
+                        g.rows
+                            .iter()
+                            .flat_map(|r| r.row.glyphs.iter().map(|g| g.uv_rect))
+                            .collect()
+                    };
+                    assert_eq!(
+                        uvs(galley),
+                        uvs(&fresh),
+                        "stale galley from the old font atlas"
+                    );
                     checked += 1;
                 }
             }
@@ -1011,6 +1333,9 @@ mod tests {
         for _ in 0..3 {
             frame(&ctx, &mut v, 1600.0, 700.0);
         }
-        assert_eq!(v.anchor.0, block, "anchor block changed after full-width + resize");
+        assert_eq!(
+            v.anchor.0, block,
+            "anchor block changed after full-width + resize"
+        );
     }
 }

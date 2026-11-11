@@ -100,4 +100,3 @@ mod tests {
         assert!(render("garbage", false, 800, 1.0).is_err());
     }
 }
-

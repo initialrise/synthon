@@ -24,7 +24,10 @@ fn main() {
         let blocks = parse::parse(&text);
         let mut firsts: Vec<(String, String)> = Vec::new();
         doc::walk(&blocks, &mut |b| {
-            if let doc::Block::Code { lang: Some(l), text } = b
+            if let doc::Block::Code {
+                lang: Some(l),
+                text,
+            } = b
                 && !firsts.iter().any(|(fl, _)| fl == l)
             {
                 firsts.push((l.clone(), text.clone()));
@@ -32,7 +35,12 @@ fn main() {
         });
         std::thread::spawn(move || {
             for (lang, text) in firsts {
-                highlight::highlight(&text, Some(&lang), true, eframe::egui::FontId::monospace(14.0));
+                highlight::highlight(
+                    &text,
+                    Some(&lang),
+                    true,
+                    eframe::egui::FontId::monospace(14.0),
+                );
             }
         });
         blocks
@@ -59,13 +67,25 @@ fn main() {
                 cc.egui_ctx.set_theme(t);
             }
             if bench {
-                eprintln!("bench: window+gl ready {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+                eprintln!(
+                    "bench: window+gl ready {:.1} ms",
+                    start.elapsed().as_secs_f64() * 1e3
+                );
             }
             let blocks = prep.join().expect("parser thread");
             let fonts = fonts.join().expect("font thread");
-            let mut v = view::Viewer::new(&cc.egui_ctx, blocks, fonts, args.full_width, args.zoom as f32 / 100.0);
+            let mut v = view::Viewer::new(
+                &cc.egui_ctx,
+                blocks,
+                fonts,
+                args.full_width,
+                args.zoom as f32 / 100.0,
+            );
             if bench {
-                eprintln!("bench: viewer+fonts {:.1} ms", start.elapsed().as_secs_f64() * 1e3);
+                eprintln!(
+                    "bench: viewer+fonts {:.1} ms",
+                    start.elapsed().as_secs_f64() * 1e3
+                );
                 v.bench = Some(start);
             }
             Ok(Box::new(v))

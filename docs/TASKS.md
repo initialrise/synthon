@@ -81,7 +81,7 @@ F is the critical path and the largest chunk. Start it first. The others are abo
 Wire A → B → F in `main.rs`, and replace F's fixtures with C/D/E/K. Run acceptance tests 1–6 from §8.
 
 ### T · Tune
-Run `bench.sh`. If launch is > 100 ms, move mermaid to a worker thread (the ponytail note in §7) before anything else. If RSS is > 80 MB, check syntect's loaded syntax set and the texture sizes first.
+Run `bench.sh`. If launch is > 100 ms, move mermaid to a worker thread (see §7) before anything else. If RSS is > 80 MB, check syntect's loaded syntax set and the texture sizes first.
 
 ---
 

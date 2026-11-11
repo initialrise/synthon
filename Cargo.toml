@@ -2,6 +2,12 @@
 name = "synthon"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"
+description = "Fast, low-memory, read-only Markdown viewer for Linux with mermaid diagrams and syntax highlighting"
+repository = "https://github.com/initialrise/synthon"
+readme = "README.md"
+keywords = ["markdown", "viewer", "mermaid", "egui", "linux"]
+categories = ["command-line-utilities", "visualization"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

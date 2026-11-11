@@ -116,7 +116,8 @@ fn spawn_worker(ctx: egui::Context, gen_: Arc<AtomicU64>) -> (mpsc::Sender<Job>,
                 continue; // stale: theme/zoom changed since it was queued
             }
             // Render at natural size × scale; the view downsizes on the GPU if the column is narrower.
-            let r = crate::mermaid::render(&j.src, j.dark, 8192, j.scale);
+            let r = std::panic::catch_unwind(|| crate::mermaid::render(&j.src, j.dark, 8192, j.scale))
+                .unwrap_or_else(|_| Err("renderer panicked".into()));
             if dtx.send((j.gen_, j.id, r, j.scale)).is_err() {
                 break;
             }
@@ -164,13 +165,16 @@ pub struct Viewer {
     view_h: f32,
     /// (top-level block, fraction into it) at the top of the viewport.
     anchor: (usize, f32),
+    /// SYNTHON_BENCH: process start; prints first-frame and diagrams-ready times, then quits.
+    pub bench: Option<std::time::Instant>,
+    frames: u32,
 }
 
 impl Viewer {
-    pub fn new(cc: &eframe::CreationContext, blocks: Vec<Block>, full_width: bool, zoom: f32) -> Self {
-        install_fonts(&cc.egui_ctx);
-        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        cc.egui_ctx.set_zoom_factor(zoom);
+    pub fn new(ctx: &egui::Context, blocks: Vec<Block>, full_width: bool, zoom: f32) -> Self {
+        install_fonts(ctx);
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        ctx.set_zoom_factor(zoom);
 
         let mut mermaid_src = Vec::new();
         let mut mermaid_start = Vec::with_capacity(blocks.len());
@@ -181,7 +185,7 @@ impl Viewer {
             mermaid_owner.resize(mermaid_src.len(), i);
         }
         let gen_ = Arc::new(AtomicU64::new(0));
-        let (jobs, done) = spawn_worker(cc.egui_ctx.clone(), gen_.clone());
+        let (jobs, done) = spawn_worker(ctx.clone(), gen_.clone());
         Viewer {
             slots: mermaid_src.iter().map(|_| Slot::default()).collect(),
             blocks,
@@ -202,6 +206,8 @@ impl Viewer {
             pending_offset: None,
             view_h: 600.0,
             anchor: (0, 0.0),
+            bench: None,
+            frames: 0,
         }
     }
 
@@ -320,6 +326,23 @@ impl Viewer {
 
 impl eframe::App for Viewer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+        if let Some(t0) = self.bench {
+            self.frames += 1;
+            if self.frames == 1 {
+                eprintln!("bench: first frame {:.1} ms", t0.elapsed().as_secs_f64() * 1e3);
+            }
+            let pending = self.slots.iter().any(|s| s.tex.is_none() && s.err.is_none());
+            if !pending {
+                eprintln!("bench: diagrams ready {:.1} ms ({} frames)", t0.elapsed().as_secs_f64() * 1e3, self.frames);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+}
+
+impl Viewer {
+    pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         for a in ctx.input(keys::actions) {
             self.apply(&ctx, a);
@@ -704,4 +727,71 @@ fn install_fonts(ctx: &egui::Context) {
     defs.families.insert(bold(), prop);
     add(&mut defs, "sans-bold", pick(&sans, Family::SansSerif, Weight::BOLD), bold());
     ctx.set_fonts(defs);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::epaint::Shape;
+
+    fn frame(ctx: &egui::Context, v: &mut Viewer, w: f32, h: f32) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(w, h))),
+            ..Default::default()
+        };
+        ctx.run_ui(input, |ui| v.show(ui))
+    }
+
+    fn visible_content(out: &egui::FullOutput, screen: Rect) -> usize {
+        fn count(s: &Shape, screen: Rect) -> usize {
+            match s {
+                Shape::Vec(v) => v.iter().map(|s| count(s, screen)).sum(),
+                Shape::Text(t) if !t.galley.is_empty() => t.visual_bounding_rect().intersects(screen) as usize,
+                Shape::Mesh(m) => m.calc_bounds().intersects(screen) as usize,
+                _ => 0,
+            }
+        }
+        out.shapes.iter().filter(|c| c.clip_rect.intersects(screen)).map(|c| count(&c.shape, screen)).sum()
+    }
+
+    fn big_doc() -> Vec<Block> {
+        let sample = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sample.md")).unwrap();
+        crate::parse::parse(&sample.repeat(40))
+    }
+
+    /// PRD §8.1: every scroll position shows content — no white screen.
+    #[test]
+    fn no_blank_frames() {
+        let ctx = egui::Context::default();
+        let mut v = Viewer::new(&ctx, big_doc(), false, 1.0);
+        let (w, h) = (900.0, 700.0);
+        frame(&ctx, &mut v, w, h);
+        frame(&ctx, &mut v, w, h);
+        assert!(v.total_h > 10.0 * h, "doc should be long: {}", v.total_h);
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(w, h));
+        let mut off = 0.0;
+        while off < v.total_h {
+            v.pending_offset = Some(off);
+            let out = frame(&ctx, &mut v, w, h);
+            assert!(visible_content(&out, screen) > 0, "blank frame at offset {off} of {}", v.total_h);
+            off += h / 3.0;
+        }
+    }
+
+    /// PRD §5.3: re-flow (full width, resize) keeps the reading position.
+    #[test]
+    fn reflow_keeps_anchor() {
+        let ctx = egui::Context::default();
+        let mut v = Viewer::new(&ctx, big_doc(), false, 1.0);
+        frame(&ctx, &mut v, 900.0, 700.0);
+        v.pending_offset = Some(v.total_h / 2.0);
+        frame(&ctx, &mut v, 900.0, 700.0);
+        frame(&ctx, &mut v, 900.0, 700.0);
+        let (block, _) = v.anchor;
+        v.full_width = true;
+        for _ in 0..3 {
+            frame(&ctx, &mut v, 1600.0, 700.0);
+        }
+        assert_eq!(v.anchor.0, block, "anchor block changed after full-width + resize");
+    }
 }
